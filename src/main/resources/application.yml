@@ -25,10 +25,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: "*"       
+        include: "*"
   trace:
     http:
-      enabled: true 
+      enabled: true
   endpoint:
     httptrace:
       enabled: true
@@ -39,3 +39,6 @@ spring:
     cache: false
   cache:
     cache-names: currentUsers
+  azure:
+    application-insights:
+      instrumentation-key: ${APPINSIGHTS_INSTRUMENTATIONKEY}
