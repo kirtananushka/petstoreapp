@@ -15,24 +15,22 @@ import com.chtrembl.petstoreapp.model.WebRequest;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
-import org.springframework.stereotype.Service;
-import org.springframework.web.reactive.function.BodyInserters;
-import org.springframework.web.reactive.function.client.WebClient;
-import org.springframework.web.reactive.function.client.WebClientException;
-import reactor.core.publisher.Mono;
-
-import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
+import javax.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.BodyInserters;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientException;
+import reactor.core.publisher.Mono;
 
 @Service
 public class PetStoreServiceImpl implements PetStoreService {
@@ -119,6 +117,7 @@ public class PetStoreServiceImpl implements PetStoreService {
 
 	@Override
 	public Collection<Product> getProducts(String category, List<Tag> tags) {
+
 		List<Product> products = new ArrayList<>();
 
 		try {
@@ -148,6 +147,18 @@ public class PetStoreServiceImpl implements PetStoreService {
 				products = products.stream().filter(product -> category.equals(product.getCategory().getName())
 						&& product.getTags().toString().contains("small")).collect(Collectors.toList());
 			}
+
+			this.sessionUser.getTelemetryClient().getContext().getProperties().put("UserName", this.sessionUser.getName());
+			this.sessionUser.getTelemetryClient().getContext().getProperties().put("SessionId", this.sessionUser.getSessionId());
+			this.sessionUser.getTelemetryClient().getContext().getProperties().put("ProductListSize", String.valueOf(products.size()));
+
+			this.sessionUser.getTelemetryClient().trackTrace(
+				String.format("Product list is retrieved by username=%s; sessionId=%s; product list size=%d", this.sessionUser.getName(),
+					this.sessionUser.getSessionId(), products.size()));
+
+			logger.info(String.format("List of products category=%s is retrieved by username=%s; sessionId=%s; product list size=%d",
+				category, this.sessionUser.getName(), this.sessionUser.getSessionId(), products.size()));
+
 			return products;
 		} catch (
 
@@ -172,6 +183,12 @@ public class PetStoreServiceImpl implements PetStoreService {
 			product.setId((long) 0);
 			products.add(product);
 		}
+		this.sessionUser.getTelemetryClient().trackEvent(
+			String.format("The product list is retrieved by username=%s; sessionId=%s; product list size=%d", this.sessionUser.getName(),
+				this.sessionUser.getSessionId(), products.size()));
+		logger.info(String.format("The list of products category=%s is retrieved by username=%s; sessionId=%s; product list size=%d",
+			category, this.sessionUser.getName(), this.sessionUser.getSessionId(), products.size()));
+
 		return products;
 	}
 
