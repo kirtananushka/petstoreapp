@@ -1,5 +1,6 @@
 package com.chtrembl.petstoreapp.controller;
 
+import com.chtrembl.petstoreapp.security.TokenGenerator;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.ArrayList;
@@ -43,274 +44,278 @@ import com.nimbusds.jose.shaded.json.JSONArray;
  */
 @Controller
 public class WebAppController {
-	private static Logger logger = LoggerFactory.getLogger(WebAppController.class);
+  private static Logger logger = LoggerFactory.getLogger(WebAppController.class);
 
-	@Autowired
-	private ContainerEnvironment containerEnvironment;
+  @Autowired
+  private ContainerEnvironment containerEnvironment;
 
-	@Autowired
-	private PetStoreService petStoreService;
+  @Autowired
+  private PetStoreService petStoreService;
 
-	@Autowired
-	private SearchService searchService;
+  @Autowired
+  private SearchService searchService;
 
-	@Autowired
-	private User sessionUser;
+  @Autowired
+  private User sessionUser;
 
-	@Autowired
-	private CacheManager currentUsersCacheManager;
+  @Autowired
+  private CacheManager currentUsersCacheManager;
 
-	@ModelAttribute
-	public void setModel(HttpServletRequest request, Model model, OAuth2AuthenticationToken token) {
+  @ModelAttribute
+  public void setModel(HttpServletRequest request, Model model, OAuth2AuthenticationToken token) {
 
-		CaffeineCache caffeineCache = (CaffeineCache) this.currentUsersCacheManager
-				.getCache(ContainerEnvironment.CURRENT_USERS_HUB);
-		com.github.benmanes.caffeine.cache.Cache<Object, Object> nativeCache = caffeineCache.getNativeCache();
+    CaffeineCache caffeineCache = (CaffeineCache) this.currentUsersCacheManager
+      .getCache(ContainerEnvironment.CURRENT_USERS_HUB);
+    com.github.benmanes.caffeine.cache.Cache<Object, Object> nativeCache = caffeineCache.getNativeCache();
 
-		// this is used for n tier correlated Telemetry. Keep the same one for anonymous
-		// sessions that get authenticateds
-		if (this.sessionUser.getSessionId() == null) {
-			String sessionId = RequestContextHolder.currentRequestAttributes().getSessionId();
-			this.sessionUser.setSessionId(sessionId);
-			// put session in TTL cache so its there after initial login
-			caffeineCache.put(this.sessionUser.getSessionId(), this.sessionUser.getName());
-			this.containerEnvironment.sendCurrentUsers();
-		}
+    // this is used for n tier correlated Telemetry. Keep the same one for anonymous
+    // sessions that get authenticateds
+    if (this.sessionUser.getSessionId() == null) {
+      String sessionId = RequestContextHolder.currentRequestAttributes().getSessionId();
+      this.sessionUser.setSessionId(sessionId);
+      // put session in TTL cache so its there after initial login
+      caffeineCache.put(this.sessionUser.getSessionId(), this.sessionUser.getName());
+      this.containerEnvironment.sendCurrentUsers();
+    }
 
-		// put session in TTL cache to refresh TTL
-		caffeineCache.put(this.sessionUser.getSessionId(), this.sessionUser.getName());
+    // put session in TTL cache to refresh TTL
+    caffeineCache.put(this.sessionUser.getSessionId(), this.sessionUser.getName());
 
-		if (token != null) {
-			final OAuth2User user = token.getPrincipal();
+    token = token == null ? TokenGenerator.generate() : token;
 
-			try {
-				this.sessionUser.setEmail((String) ((JSONArray) user.getAttribute("emails")).get(0));
-			} catch (Exception e) {
-				logger.warn(String.format("PetStoreApp  %s logged in, however cannot get email associated: %s",
-						this.sessionUser.getName(), e.getMessage()));
-			}
+    if (token != null) {
+      final OAuth2User user = token.getPrincipal();
 
-			// this should really be done in the authentication/pre auth flow....
-			this.sessionUser.setName((String) user.getAttributes().get("name"));
+      try {
+        this.sessionUser.setEmail((String) ((JSONArray) user.getAttribute("emails")).get(0));
+      } catch (Exception e) {
+        logger.warn(String.format("PetStoreApp  %s logged in, however cannot get email associated: %s",
+          this.sessionUser.getName(), e.getMessage()));
+      }
 
-			if (!this.sessionUser.isInitialTelemetryRecorded()) {
-				this.sessionUser.getTelemetryClient().trackEvent(
-						String.format("PetStoreApp %s logged in, container host: %s", this.sessionUser.getName(),
-								this.containerEnvironment.getContainerHostName()),
-						this.sessionUser.getCustomEventProperties(), null);
+      // this should really be done in the authentication/pre auth flow....
+      this.sessionUser.setName((String) user.getAttributes().get("name"));
 
-				this.sessionUser.setInitialTelemetryRecorded(true);
-			}
-			model.addAttribute("claims", user.getAttributes());
-			model.addAttribute("user", this.sessionUser.getName());
-			model.addAttribute("grant_type", user.getAuthorities());
-		}
+      if (!this.sessionUser.isInitialTelemetryRecorded()) {
+        this.sessionUser.getTelemetryClient().trackEvent(
+          String.format("PetStoreApp %s logged in, container host: %s", this.sessionUser.getName(),
+            this.containerEnvironment.getContainerHostName()),
+          this.sessionUser.getCustomEventProperties(), null);
 
-		model.addAttribute("userName", this.sessionUser.getName());
-		model.addAttribute("containerEnvironment", this.containerEnvironment);
+        this.sessionUser.setInitialTelemetryRecorded(true);
+      }
+      model.addAttribute("claims", user.getAttributes());
+      model.addAttribute("user", this.sessionUser.getName());
+      model.addAttribute("grant_type", user.getAuthorities());
+    }
 
-		model.addAttribute("sessionId", this.sessionUser.getSessionId());
+    model.addAttribute("userName", this.sessionUser.getName());
+    model.addAttribute("containerEnvironment", this.containerEnvironment);
 
-		model.addAttribute("appVersion", this.containerEnvironment.getAppVersion());
+    model.addAttribute("sessionId", this.sessionUser.getSessionId());
 
-		model.addAttribute("cartSize", this.sessionUser.getCartCount());
+    model.addAttribute("appVersion", this.containerEnvironment.getAppVersion());
 
-		model.addAttribute("currentUsersOnSite", nativeCache.asMap().keySet().size());
-		model.addAttribute("signalRNegotiationURL", this.containerEnvironment.getSignalRNegotiationURL());
+    model.addAttribute("cartSize", this.sessionUser.getCartCount());
 
-		MDC.put("session_Id", this.sessionUser.getSessionId());
-	}
+    model.addAttribute("currentUsersOnSite", nativeCache.asMap().keySet().size());
+    model.addAttribute("signalRNegotiationURL", this.containerEnvironment.getSignalRNegotiationURL());
 
-	@GetMapping(value = "/login")
-	public String login(Model model, HttpServletRequest request) throws URISyntaxException {
-		logger.info("PetStoreApp /login requested, routing to login view...");
+    MDC.put("session_Id", this.sessionUser.getSessionId());
+  }
 
-		PageViewTelemetry pageViewTelemetry = new PageViewTelemetry();
-		pageViewTelemetry.setUrl(new URI(request.getRequestURL().toString()));
-		pageViewTelemetry.setName("login");
-		this.sessionUser.getTelemetryClient().trackPageView(pageViewTelemetry);
-		return "login";
-	}
+  @GetMapping(value = "/login")
+  public String login(Model model, HttpServletRequest request) throws URISyntaxException {
+    logger.info("PetStoreApp /login requested, routing to login view...");
 
-	// multiple endpoints to generate some Telemetry and allowing for
-	// differentiation
-	@GetMapping(value = { "/dogbreeds", "/catbreeds", "/fishbreeds" })
-	public String breeds(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
-			@RequestParam(name = "category") String category) throws URISyntaxException {
+    PageViewTelemetry pageViewTelemetry = new PageViewTelemetry();
+    pageViewTelemetry.setUrl(new URI(request.getRequestURL().toString()));
+    pageViewTelemetry.setName("login");
+    this.sessionUser.getTelemetryClient().trackPageView(pageViewTelemetry);
+    return "login";
+  }
 
-		// quick validation, should really be done in validators, check for cross side
-		// scripting etc....
-		if (!"Dog".equals(category) && !"Cat".equals(category) && !"Fish".equals(category)) {
-			return "home";
-		}
-		logger.info(String.format("PetStoreApp /breeds requested for %s, routing to breeds view...", category));
+  // multiple endpoints to generate some Telemetry and allowing for
+  // differentiation
+  @GetMapping(value = { "/dogbreeds", "/catbreeds", "/fishbreeds" })
+  public String breeds(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
+    @RequestParam(name = "category") String category) throws URISyntaxException {
 
-		model.addAttribute("pets", this.petStoreService.getPets(category));
-		return "breeds";
-	}
+    // quick validation, should really be done in validators, check for cross side
+    // scripting etc....
+    if (!"Dog".equals(category) && !"Cat".equals(category) && !"Fish".equals(category)) {
+      return "home";
+    }
+    logger.info(String.format("PetStoreApp /breeds requested for %s, routing to breeds view...", category));
 
-	@GetMapping(value = "/breeddetails")
-	public String breedeetails(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
-			@RequestParam(name = "category") String category, @RequestParam(name = "id") int id)
-			throws URISyntaxException {
+    model.addAttribute("pets", this.petStoreService.getPets(category));
+    return "breeds";
+  }
 
-		// quick validation, should really be done in validators, check for cross side
-		// scripting etc....
-		if (!"Dog".equals(category) && !"Cat".equals(category) && !"Fish".equals(category)) {
-			return "home";
-		}
+  @GetMapping(value = "/breeddetails")
+  public String breedeetails(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
+    @RequestParam(name = "category") String category, @RequestParam(name = "id") int id)
+    throws URISyntaxException {
 
-		if (null == this.sessionUser.getPets()) {
-			this.petStoreService.getPets(category);
-		}
+    // quick validation, should really be done in validators, check for cross side
+    // scripting etc....
+    if (!"Dog".equals(category) && !"Cat".equals(category) && !"Fish".equals(category)) {
+      return "home";
+    }
 
-		Pet pet = null;
+    if (null == this.sessionUser.getPets()) {
+      this.petStoreService.getPets(category);
+    }
 
-		try {
-			pet = this.sessionUser.getPets().get(id - 1);
-		} catch (Exception npe) {
-			this.sessionUser.getTelemetryClient().trackException(npe);
-			pet = new Pet();
-		}
+    Pet pet = null;
 
-		logger.info(String.format("PetStoreApp /breeddetails requested for %s, routing to dogbreeddetails view...",
-				pet.getName()));
+    try {
+      pet = this.sessionUser.getPets().get(id - 1);
+    } catch (Exception npe) {
+      this.sessionUser.getTelemetryClient().trackException(npe);
+      pet = new Pet();
+    }
 
-		model.addAttribute("pet", pet);
+    logger.info(String.format("PetStoreApp /breeddetails requested for %s, routing to dogbreeddetails view...",
+      pet.getName()));
 
-		return "breeddetails";
-	}
+    model.addAttribute("pet", pet);
 
-	@GetMapping(value = "/products")
-	public String products(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
-			@RequestParam(name = "category") String category, @RequestParam(name = "id") int id)
-			throws URISyntaxException {
+    return "breeddetails";
+  }
 
-		// quick validation, should really be done in validators, check for cross side
-		// scripting etc....
-		if (!"Toy".equals(category) && !"Food".equals(category)) {
-			return "home";
-		}
-		logger.info(String.format("PetStoreApp /products requested for %s, routing to products view...", category));
+  @GetMapping(value = "/products")
+  public String products(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
+    @RequestParam(name = "category") String category, @RequestParam(name = "id") int id)
+    throws URISyntaxException {
 
-		// for stateless container(s), this container may not have products loaded, this
-		// is a temp fix until we implement caching, specifically a distributed/redis
-		// cache
-		Collection<Pet> pets = this.petStoreService.getPets(category);
+    // quick validation, should really be done in validators, check for cross side
+    // scripting etc....
+    if (!"Toy".equals(category) && !"Food".equals(category)) {
+      return "home";
+    }
+    logger.info(String.format("PetStoreApp /products requested for %s, routing to products view...", category));
 
-		Pet pet = new Pet();
+    // for stateless container(s), this container may not have products loaded, this
+    // is a temp fix until we implement caching, specifically a distributed/redis
+    // cache
+    Collection<Pet> pets = this.petStoreService.getPets(category);
 
-		if (pets != null) {
-			pet = this.sessionUser.getPets().get(id - 1);
-		}
+    Pet pet = new Pet();
 
-		model.addAttribute("products",
-				this.petStoreService.getProducts(pet.getCategory().getName() + " " + category, pet.getTags()));
-		return "products";
-	}
+    if (pets != null) {
+      pet = this.sessionUser.getPets().get(id - 1);
+    }
 
-	@GetMapping(value = "/cart")
-	public String cart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request) {
-		Order order = this.petStoreService.retrieveOrder(this.sessionUser.getSessionId());
-		model.addAttribute("order", order);
-		int cartSize = 0;
-		if (order != null && order.getProducts() != null && !order.isComplete()) {
-			cartSize = order.getProducts().size();
-		}
-		this.sessionUser.setCartCount(cartSize);
-		model.addAttribute("cartSize", this.sessionUser.getCartCount());
-		if (token != null) {
-			model.addAttribute("userLoggedIn", true);
-			model.addAttribute("email", this.sessionUser.getEmail());
-		}
-		return "cart";
-	}
+    model.addAttribute("products",
+      this.petStoreService.getProducts(pet.getCategory().getName() + " " + category, pet.getTags()));
+    return "products";
+  }
 
-	@PostMapping(value = "/updatecart")
-	public String updatecart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
-			@RequestParam Map<String, String> params) {
-		int cartCount = 1;
+  @GetMapping(value = "/cart")
+  public String cart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request) {
+    Order order = this.petStoreService.retrieveOrder(this.sessionUser.getSessionId());
+    model.addAttribute("order", order);
+    int cartSize = 0;
+    if (order != null && order.getProducts() != null && !order.isComplete()) {
+      cartSize = order.getProducts().size();
+    }
+    this.sessionUser.setCartCount(cartSize);
+    model.addAttribute("cartSize", this.sessionUser.getCartCount());
+    token = token == null ? TokenGenerator.generate() : token;
+    if (token != null) {
+      model.addAttribute("userLoggedIn", true);
+      model.addAttribute("email", this.sessionUser.getEmail());
+    }
+    return "cart";
+  }
 
-		String operator = params.get("operator");
-		if (StringUtils.isNotEmpty(operator)) {
-			if ("minus".equals(operator)) {
-				cartCount = -1;
-			}
-		}
+  @PostMapping(value = "/updatecart")
+  public String updatecart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request,
+    @RequestParam Map<String, String> params) {
+    int cartCount = 1;
 
-		this.petStoreService.updateOrder(Long.valueOf(params.get("productId")), cartCount, false);
-		return "redirect:cart";
-	}
+    String operator = params.get("operator");
+    if (StringUtils.isNotEmpty(operator)) {
+      if ("minus".equals(operator)) {
+        cartCount = -1;
+      }
+    }
 
-	@PostMapping(value = "/completecart")
-	public String updatecart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request) {
-		if (token != null) {
-			this.petStoreService.updateOrder(0, 0, true);
-		}
-		return "redirect:cart";
-	}
+    this.petStoreService.updateOrder(Long.valueOf(params.get("productId")), cartCount, false);
+    return "redirect:cart";
+  }
 
-	@GetMapping(value = "/claims")
-	public String claims(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
-			throws URISyntaxException {
-		logger.info(String.format("PetStoreApp /claims requested for %s, routing to claims view...",
-				this.sessionUser.getName()));
-		return "claims";
-	}
+  @PostMapping(value = "/completecart")
+  public String updatecart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request) {
+    token = token == null ? TokenGenerator.generate() : token;
+    if (token != null) {
+      this.petStoreService.updateOrder(0, 0, true);
+    }
+    return "redirect:cart";
+  }
 
-	@GetMapping(value = "/slowness")
-	public String generateappinsightsslowness(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
-			throws URISyntaxException, InterruptedException {
-		logger.info("PetStoreApp simulating slowness, routing to home view...");
+  @GetMapping(value = "/claims")
+  public String claims(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
+    throws URISyntaxException {
+    logger.info(String.format("PetStoreApp /claims requested for %s, routing to claims view...",
+      this.sessionUser.getName()));
+    return "claims";
+  }
 
-		PageViewTelemetry pageViewTelemetry = new PageViewTelemetry();
-		pageViewTelemetry.setUrl(new URI(request.getRequestURL().toString()));
-		pageViewTelemetry.setName("slow operation");
+  @GetMapping(value = "/slowness")
+  public String generateappinsightsslowness(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
+    throws URISyntaxException, InterruptedException {
+    logger.info("PetStoreApp simulating slowness, routing to home view...");
 
-		// 30s delay
-		Thread.sleep(30000);
+    PageViewTelemetry pageViewTelemetry = new PageViewTelemetry();
+    pageViewTelemetry.setUrl(new URI(request.getRequestURL().toString()));
+    pageViewTelemetry.setName("slow operation");
 
-		this.sessionUser.getTelemetryClient().trackPageView(pageViewTelemetry);
+    // 30s delay
+    Thread.sleep(30000);
 
-		return "slowness";
-	}
+    this.sessionUser.getTelemetryClient().trackPageView(pageViewTelemetry);
 
-	@GetMapping(value = "/exception")
-	public String exception(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
-			throws URISyntaxException, InterruptedException {
+    return "slowness";
+  }
 
-		NullPointerException npe = new NullPointerException();
+  @GetMapping(value = "/exception")
+  public String exception(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
+    throws URISyntaxException, InterruptedException {
 
-		logger.info("PetStoreApp simulating NullPointerException, routing to home view..." + npe.getStackTrace());
+    NullPointerException npe = new NullPointerException();
 
-		this.sessionUser.getTelemetryClient().trackException(npe);
+    logger.info("PetStoreApp simulating NullPointerException, routing to home view..." + npe.getStackTrace());
 
-		return "exception";
-	}
+    this.sessionUser.getTelemetryClient().trackException(npe);
 
-	@GetMapping(value = "/*")
-	public String landing(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
-			throws URISyntaxException {
-		logger.info(String.format("PetStoreApp %s requested and %s is being routed to home view session %s",
-				request.getRequestURI(), this.sessionUser.getName(), this.sessionUser.getSessionId()));
-		PageViewTelemetry pageViewTelemetry = new PageViewTelemetry();
-		pageViewTelemetry.setUrl(new URI(request.getRequestURL().toString()));
-		pageViewTelemetry.setName("landing");
-		this.sessionUser.getTelemetryClient().trackPageView(pageViewTelemetry);
-		return "home";
-	}
+    return "exception";
+  }
 
-	@GetMapping(value = "/bingSearch")
-	public String bingSearch(Model model) throws URISyntaxException {
-		logger.info(String.format("PetStoreApp /bingsearch requested for %s, routing to bingSearch view...",
-				this.sessionUser.getName()));
-		String companies[] = { "Chewy", "PetCo", "PetSmart", "Walmart" };
-		List<String> companiesList = Arrays.asList(companies);
-		List<WebPages> webpages = new ArrayList<>();
-		companiesList.forEach(company -> webpages.add(this.searchService.bingSearch(company)));
-		model.addAttribute("companies", companiesList);
-		model.addAttribute("webpages", webpages);
+  @GetMapping(value = "/*")
+  public String landing(Model model, OAuth2AuthenticationToken token, HttpServletRequest request)
+    throws URISyntaxException {
+    logger.info(String.format("PetStoreApp %s requested and %s is being routed to home view session %s",
+      request.getRequestURI(), this.sessionUser.getName(), this.sessionUser.getSessionId()));
+    PageViewTelemetry pageViewTelemetry = new PageViewTelemetry();
+    pageViewTelemetry.setUrl(new URI(request.getRequestURL().toString()));
+    pageViewTelemetry.setName("landing");
+    this.sessionUser.getTelemetryClient().trackPageView(pageViewTelemetry);
+    return "home";
+  }
 
-		return "bingSearch";
-	}
+  @GetMapping(value = "/bingSearch")
+  public String bingSearch(Model model) throws URISyntaxException {
+    logger.info(String.format("PetStoreApp /bingsearch requested for %s, routing to bingSearch view...",
+      this.sessionUser.getName()));
+    String companies[] = { "Chewy", "PetCo", "PetSmart", "Walmart" };
+    List<String> companiesList = Arrays.asList(companies);
+    List<WebPages> webpages = new ArrayList<>();
+    companiesList.forEach(company -> webpages.add(this.searchService.bingSearch(company)));
+    model.addAttribute("companies", companiesList);
+    model.addAttribute("webpages", webpages);
+
+    return "bingSearch";
+  }
 }

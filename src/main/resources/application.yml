@@ -5,7 +5,7 @@ bing:
 petstore:
   service:
     pet:
-     url: ${PETSTOREPETSERVICE_URL:http://localhost:8081}
+     url: ${PETSTOREPETSERVICE_URL:http://localhost:8084}
     product:
       url: ${PETSTOREPRODUCTSERVICE_URL:http://localhost:8082}
     order:
