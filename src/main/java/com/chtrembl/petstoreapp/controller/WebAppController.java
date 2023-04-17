@@ -81,8 +81,6 @@ public class WebAppController {
     // put session in TTL cache to refresh TTL
     caffeineCache.put(this.sessionUser.getSessionId(), this.sessionUser.getName());
 
-    token = token == null ? TokenGenerator.generate() : token;
-
     if (token != null) {
       final OAuth2User user = token.getPrincipal();
 
@@ -222,7 +220,6 @@ public class WebAppController {
     }
     this.sessionUser.setCartCount(cartSize);
     model.addAttribute("cartSize", this.sessionUser.getCartCount());
-    token = token == null ? TokenGenerator.generate() : token;
     if (token != null) {
       model.addAttribute("userLoggedIn", true);
       model.addAttribute("email", this.sessionUser.getEmail());
@@ -248,7 +245,6 @@ public class WebAppController {
 
   @PostMapping(value = "/completecart")
   public String updatecart(Model model, OAuth2AuthenticationToken token, HttpServletRequest request) {
-    token = token == null ? TokenGenerator.generate() : token;
     if (token != null) {
       this.petStoreService.updateOrder(0, 0, true);
     }
